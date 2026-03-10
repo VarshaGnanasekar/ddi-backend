@@ -2,13 +2,14 @@ services:
   - type: web
     name: ddi-api
     runtime: python
+    pythonVersion: "3.11.9"
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: HF_TOKEN
-        sync: false        # paste your HF token in Render dashboard
+        sync: false
       - key: HF_REPO
-        value: your-username/ddi-models   # change this
+        value: VarshaSekar/Drug_Drug_Prediction
       - key: JWT_SECRET
         generateValue: true
     disk:
