@@ -8,11 +8,4 @@ psutil==5.9.8
 pandas==2.1.4
 numpy==1.26.4
 python-multipart==0.0.9
-
-# PyTorch CPU-only (smaller + faster to install on Render free tier)
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.1.0+cpu
-torch-scatter==2.1.2
-torch-sparse==0.6.18
-torch-cluster==1.6.3
 torch-geometric==2.5.3
