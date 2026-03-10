@@ -3,9 +3,11 @@ services:
     name: ddi-api
     runtime: python
     pythonVersion: "3.11.9"
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --python-version 3.11 -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: HF_TOKEN
         sync: false
       - key: HF_REPO
