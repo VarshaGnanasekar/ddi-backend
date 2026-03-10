@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ddi-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: HF_TOKEN
+        sync: false        # paste your HF token in Render dashboard
+      - key: HF_REPO
+        value: your-username/ddi-models   # change this
+      - key: JWT_SECRET
+        generateValue: true
+    disk:
+      name: model-cache
+      mountPath: /tmp
+      sizeGB: 1
