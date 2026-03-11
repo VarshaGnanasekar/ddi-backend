@@ -3,7 +3,7 @@ DDI Intelligence Platform — FastAPI Backend
 Drop this in your ddi-backend/ folder alongside inference.py, model.py
 """
 
-import os, json, time, asyncio, sqlite3, hashlib, secrets
+import os, json, time, asyncio, sqlite3, hashlib, secrets, gc
 from datetime import datetime, timedelta
 from typing import Optional, List
 from contextlib import asynccontextmanager
@@ -16,30 +16,41 @@ from pydantic import BaseModel
 import jwt
 
 # ── Model download on startup ─────────────────────────────────────────────────
-HF_TOKEN    = os.getenv("HF_TOKEN", "")          # set in Render env vars
-HF_REPO     = os.getenv("HF_REPO",  "your-username/ddi-models")  # e.g. "varshini/ddi-models"
-MODEL_DIR   = "/tmp/ddi_models"
-FILES_NEEDED = ["best_model.pt", "hetero_data_mega.pt", "drug_id_mapping_aux.csv", "drug_names.csv"]
+HF_TOKEN    = os.getenv("HF_TOKEN", "")
+HF_REPO     = os.getenv("HF_REPO",  "your-username/ddi-models")
+MODEL_DIR       = "/tmp/ddi_models"
+REQUIRED_FILES  = ["best_model.pt", "hetero_data_mega.pt", "drug_id_mapping_aux.csv"]
+OPTIONAL_FILES  = []   # drug_names.csv not needed — DrugBank IDs used directly
 
 def download_models():
     """Download model files from HuggingFace Hub if not already present."""
     os.makedirs(MODEL_DIR, exist_ok=True)
     try:
         from huggingface_hub import hf_hub_download
-        for fname in FILES_NEEDED:
+        for fname in REQUIRED_FILES + OPTIONAL_FILES:
             dest = os.path.join(MODEL_DIR, fname)
+            optional = fname in OPTIONAL_FILES
             if not os.path.exists(dest):
                 print(f"[STARTUP] Downloading {fname}...")
-                hf_hub_download(
-                    repo_id=HF_REPO,
-                    filename=fname,
-                    repo_type="dataset",
-                    token=HF_TOKEN or None,
-                    local_dir=MODEL_DIR,
-                )
-                print(f"[STARTUP] ✅ {fname} ready")
+                try:
+                    hf_hub_download(
+                        repo_id=HF_REPO,
+                        filename=fname,
+                        repo_type="dataset",
+                        token=HF_TOKEN or None,
+                        local_dir=MODEL_DIR,
+                    )
+                    print(f"[STARTUP] ✅ {fname} ready")
+                except Exception as e:
+                    if optional:
+                        print(f"[STARTUP] ⚠️ Optional file {fname} not found, skipping.")
+                    else:
+                        print(f"[STARTUP] ❌ Download failed: {e}")
+                        raise
             else:
                 print(f"[STARTUP] ✅ {fname} already cached")
+        # Free memory after downloads
+        gc.collect()
     except Exception as e:
         print(f"[STARTUP] ❌ Download failed: {e}")
         raise
@@ -114,13 +125,19 @@ async def lifespan(app: FastAPI):
     print("[STARTUP] Initialising DDIPredictor...")
     init_db()
 
-    # Patch paths before importing inference
+    # Set env vars BEFORE importing inference — these are read at __init__ time
+    os.environ["DDI_CHECKPOINT"] = os.path.join(MODEL_DIR, "best_model.pt")
+    os.environ["DDI_DATA"]       = os.path.join(MODEL_DIR, "hetero_data_mega.pt")
+    os.environ["DDI_DRUG_MAP"]   = os.path.join(MODEL_DIR, "drug_id_mapping_aux.csv")
+
+    # Also patch module-level vars (belt-and-suspenders)
     import inference as inf_module
-    inf_module.CHECKPOINT_PATH = os.path.join(MODEL_DIR, "best_model.pt")
-    inf_module.DATA_PATH       = os.path.join(MODEL_DIR, "hetero_data_mega.pt")
-    inf_module.DRUG_MAP_PATH   = os.path.join(MODEL_DIR, "drug_id_mapping_aux.csv")
+    inf_module.CHECKPOINT_PATH = os.environ["DDI_CHECKPOINT"]
+    inf_module.DATA_PATH       = os.environ["DDI_DATA"]
+    inf_module.DRUG_MAP_PATH   = os.environ["DDI_DRUG_MAP"]
 
     from inference import DDIPredictor
+    DDIPredictor._instance = None   # force fresh init with correct paths
     predictor = DDIPredictor.get_instance()
     print("[STARTUP] ✅ Ready!")
     yield
@@ -137,23 +154,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Drug name mapping ─────────────────────────────────────────────────────────
-_drug_name_map: dict = {}   # drugbank_id -> common_name
-_name_to_id_map: dict = {}  # lowercase_name -> drugbank_id
+# ── Drug name mapping — not used, IDs are canonical ─────────────────────────
+_drug_name_map: dict  = {}
+_name_to_id_map: dict = {}
 
 def load_drug_names():
-    global _drug_name_map, _name_to_id_map
-    path = os.path.join(MODEL_DIR, "drug_names.csv")
-    if not os.path.exists(path):
-        return
-    import csv
-    with open(path) as f:
-        for row in csv.DictReader(f):
-            did  = row.get("drugbank_id","").strip()
-            name = row.get("name","").strip()
-            if did and name:
-                _drug_name_map[did]          = name
-                _name_to_id_map[name.lower()] = did
+    pass  # drug_names.csv not required; DrugBank IDs are used directly
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class RegisterRequest(BaseModel):
